@@ -35,7 +35,7 @@ use std::sync::atomic::AtomicBool;
 use color_eyre::{eyre::eyre, Result};
 use async_trait::async_trait;
 
-use tokio::sync::{RwLock,mpsc};
+use tokio::sync::{Mutex, RwLock,mpsc};
 use std::convert::TryFrom;
 
 use std::net::SocketAddr;
@@ -47,7 +47,47 @@ use std::net::SocketAddr;
 // the Channel abstraction is some sort of global server wide channel that can span accross
 // multiple endpoints of possible different types
 struct Channel {
-    endpoints: Vec<Arc<dyn EndpointChannel>>,
+    name: String,
+    endpoints: Vec<Arc<EndpointInfo>>,
+}
+
+impl Channel {
+    //TODO result -> statuses
+    //
+    //TODO V 
+    //fn send_msg_to_endpoints_no_echo(&self, msg: &Arc<Message>) -> Result<()> {
+    //    self.send_msg_to_endpoints
+    //}
+    async fn send_msg_to_endpoints(&self, msg: &Arc<Message>) -> Result<()> {
+        //TODO use futures unordered
+        let mut results = FuturesUnordered::new();
+
+        // TODO can this happen and if handle
+        assert!( self.endpoints.len() != 0);
+
+        self.endpoints.iter().for_each(|ep| {
+            // TODO userdef cfg.timeout
+            results.push( ep.send_event(EndpointEvent::Message(msg.clone()), Duration::from_secs(10)))
+        });
+
+        // we gotta use map as this gives us ownership of res which avoids a lifetime issue
+        let errmsg: String = results.filter_map(|mut res| async move {
+            match res {
+                Ok(EndpointEventResponse::MessageDeliverySuccess) => None,
+                _ => Some(res),
+            }
+        }).map(|e| match e {
+            Err(e) => format!("{}\n", e),
+            Ok(res) => format!("{:?}", res)
+        }).collect().await;
+
+        //TODO is it possible for this thing to spit out an Option<>
+        if errmsg.is_empty() {
+            Ok(())
+        } else {
+            Err(eyre!(errmsg))
+        }
+    }
 }
 
 trait EndpointChannel {
@@ -56,7 +96,6 @@ trait EndpointChannel {
 
     fn motd(&self) -> Option<String>;
 
-    fn endpoints(&self) -> Vec<Arc<EndpointInfo>>;
 }
 
 
@@ -114,6 +153,8 @@ struct Image {
     // .. TODO more cached
 }
 
+
+
 // I chose to go with a struct instead of traits since not That
 // much flexibility is needed here over extra code
 //
@@ -123,8 +164,8 @@ struct Message {
     delivery_mode: DeliveryMode,
     endpoint_info: Arc<EndpointInfo>,
     
-    //
-    user: Arc<User>,
+    sending_user: Arc<User>,
+    channel: Option<Arc<Channel>>,
 
     // TODO on None show the yotosuba 404 pic instead of the image :)
     // with a small notice that its actully missing (4 real) 
@@ -135,6 +176,13 @@ struct Message {
 
 // server wide abstraction for a user
 struct User {
+    name: String,
+    // TODO should this be a vec so a user can have the same identity on multiple 
+    // endpoints or would that just fuck up things and have no point
+    endpoint: Arc<EndpointInfo>,
+    //TOOD 
+    //prems: Vec3<enum perm>,
+    //groups: Vec3<Arc<Group>>
 }
 
 
@@ -154,9 +202,6 @@ impl EndpointChannel for IrcChannel {
         self.motd.clone()
     }
 
-    fn endpoints(&self) -> Vec<Arc<EndpointInfo>> {
-        Vec::new()
-    }
 }
 
 struct IrcChannel {
@@ -240,23 +285,19 @@ impl Endpoint for IrcEndpoint {
         // TODO DBG
         if self.name() == "irc_2" {
             self.event_to_server.unwrap().send(EndpointEventInfo {
-                event: EndpointEvent::ShutdownServer,
-                //event: EndpointEvent::Message(Arc::new( Message {
-                //    delivery_mode: DeliveryMode::PrivateMessage,
-                //    user: Arc::new( IrcUser{ nick: RwLock::new("leop".into()), channels: RwLock::new(
-                //            {
-                //                vec![
-                //                    IrcChannel {
-                //                        motd: "Im hungry",
-                //                        name: "#the_pub"
-                //                    }
-                //                ]
-                //    })} ),
-                //    endpoint_info: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
-                //    img: None,
-                //    text: Some("welcome to my irc shit".into())
-                //}
-                //)),
+                //event: EndpointEvent::ShutdownServer,
+                event: EndpointEvent::Message(Arc::new( Message {
+                    delivery_mode: DeliveryMode::Channel,
+                    sending_user: Arc::new(User {
+                        name: "joe".into(),
+                        endpoint: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
+                    }),
+                    channel: Some(Arc::new(Channel { name: "#the_pub".into(), endpoints: Vec::new() })),
+                    endpoint_info: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
+                    img: None,
+                    text: Some("welcome to my irc shit".into())
+                }
+                )),
                 response_to: s,
             }).await; // TODO remove also it has no await 
         } 
@@ -355,6 +396,7 @@ struct IrcEndpoint {
 
 #[derive(Debug)]
 enum EndpointEventResponse {
+    MessageDeliverySuccess,
     EndpointShutdownSuccess
 }
 
@@ -372,7 +414,15 @@ struct EndpointEventInfo where mpsc::Sender<EndpointEventResponse>: Send{
 
 impl EndpointInfo {
     // TODO use and impl
-    // fn send_event(&self, EndpointEventInfo>, timeout) ->  Result<Response,Timeout>
+    async fn send_event(&self, ev: EndpointEvent, timeout: Duration) ->  Result<EndpointEventResponse,tokio::time::error::Elapsed> {
+        let (s,mut r) = mpsc::channel(999); // TODO user def 
+        let evi = EndpointEventInfo {
+            response_to: s,
+            event: ev,
+        };
+        self.event_to_endpoint.send(evi);
+        time::timeout(timeout, r.recv()).await.map(|res| res.unwrap())
+    }
 }
 
 struct EndpointInfo {
@@ -437,7 +487,33 @@ impl Server {
                 // TODO log(HIGH_VERB,{:?}, event) 
                 let response = match event.event {
                     EndpointEvent::Message(msg) => {
-                        //println!("<{}>: {}", msg.user.username().await ,msg.text.as_ref().unwrap());
+                        // TODO we will get echo because with for example telegram
+                        // endpoints the people in the chan already saw the message as it first
+                        // goes to telegram servers then to us. But for irc the others only see it
+                        // if they actually get it send by us since we are the server so one gotta
+                        // distingulish
+                        let echo = true; // TODO read from msg.endpoint.type
+
+                        println!("<{}> [{}] {}", msg.sending_user.name,
+                            {
+                                &msg.channel.as_ref().unwrap().name
+                            },
+                            msg.text.as_ref().unwrap());
+                        let res = match msg.delivery_mode {
+                            DeliveryMode::Channel => {
+                                //TODO
+                                if !echo {
+                                } else {
+                                    msg.channel.as_ref().unwrap().send_msg_to_endpoints(
+                                        &msg
+                                    ).await;
+                                }
+                            },
+                            _ => {
+                                panic!("unimp dev mode");
+                            },
+                        };
+                        // TODO return res
                         Ok(())
                     },
                     EndpointEvent::ShutdownServer => {
@@ -520,8 +596,14 @@ async fn main() -> Result<()> {
         sockaddrs: vec!["0.0.0.0:4001".parse().unwrap()]
     })?;
 
+    let ep3 = IrcEndpoint::try_from( IrcEndpointConfig {
+        name: Some("irc_3".into()),
+        sockaddrs: vec!["0.0.0.0:4002".parse().unwrap()]
+    })?;
+
     srv.load_endpoint(Box::new(ep1));
     srv.load_endpoint(Box::new(ep2));
+    srv.load_endpoint(Box::new(ep3));
 
     srv.run().await
 
