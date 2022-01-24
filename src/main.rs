@@ -34,11 +34,14 @@ use std::sync::atomic::AtomicBool;
 use color_eyre::{eyre::eyre, Result};
 use async_trait::async_trait;
 
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock,mpsc};
 use std::convert::TryFrom;
 
 use std::net::SocketAddr;
 
+// TODO channels can be assigned a the endpoints they shall span accross
+// like so its possibl to have a channel that delivers to From irc to Tg and the other way around
+// but leaves out for example matrix or includes it whatever ...
 trait Channel {
 }
 
@@ -55,13 +58,50 @@ enum DeliveryMode {
     Channel,
     PrivateMessage,
     BroadcastChannel, //(deliver message to every channel)
-    BroadcastUser //(deliver message to every user)
+    BroadcastUse, //(deliver message to every user)
+    SerdeError      //server commands and such
 }
 
-enum ImageType {
-    Picture, //just a pic
-    Sticker,
-    Url, // for irc people 
+// - actually I discarded that idea for now because in most cases
+// the url will still be fetched (reuploads + analysis)[optional]
+//enum ImageType {
+//    Picture(RustImgLibType), //just a pic
+//    Sticker(RustImgLibType),
+//    Url(String), // for irc people 
+//}
+
+// TODO order them by preference or even better let the user define the
+// prefered ordering to which format it should be converted to preferilby
+// eg if we like good quality pics we always encode BMP's to PNG's if 
+enum ImageFormat {
+    PNG, // PNG(Arc[u8])
+    JPG,
+    BMP,
+}
+
+// TODO user config for always trying to strip metadata from images for
+// extra priv protection
+impl Image {
+    // if the endpoint accepts a format and its in that form originally
+    // why convert it whey you could just send whats already ther
+    //
+    fn original_format(&self) -> ImageFormat {
+        ImageFormat::BMP
+    }
+
+    // TODO make sure to always use cached images
+    //fn to_png(&self) {
+    // if self.png_cached.read() {
+    //  *self.png_cached.write() = PNG::From(self.orig)
+    // } else 
+    //   self.png_cached().read()
+    // }
+}
+
+struct Image {
+    original: ImageFormat,
+    //png_cached: RwLock< Option<Arc<[u8]>> >,
+    // .. TODO more cached
 }
 
 // I chose to go with a struct instead of traits since not That
@@ -70,12 +110,61 @@ enum ImageType {
 // eg implementing Into<> for each dyn Message to each struct *Message
 // would be more code than just parsing it into a struct Message
 struct Message {
+    delivery_mode: DeliveryMode,
+    endpoint_info: Arc<EndpointInfo>,
+    user: Arc<dyn User>,
+
+    // TODO on None show the yotosuba 404 pic instead of the image :)
+    // with a small notice that its actully missing (4 real) 
+    img: Option<Image>,
+    // TODO for logging/dbg: msg_raw: 
+    text: Option<String>,
 }
 
+#[async_trait]
 trait User {
+    //TODO 
+    //! the data User holds such as a nichname is always RwLock<>ed (or atomic in case of counters
+    //! or shit)
+    //! TODO always use .write() when unsure if the following operation MIGHT/WILL write. For
+    //! example when doing changing data after first inspecting it we still write lock it
+    //! eventhough we might not write to it in fact. The problem is that if we:
+    //! if read_lock().cond { ... write().stuff } we would have to drop the read handle before
+    //! getting a write and it can not be guaranteed that we get the write and not something else
+    //!  ---> data race
+    //!
+    //!  thats why all write operations should only be done by the endpoint such as renaming or
+    //!  shit
+
+    async fn username(self: &Self) -> String;
+    async fn channels(self: &Self) -> Vec<Arc<dyn Channel>>;
+
+    // TODO: Impl
+    // send response + 
+    //async fn set_username(self: Arc<Self>) -> Result<()>;
+
 }
 
-trait DisplayIrcMessage {
+#[async_trait]
+impl User for Arc<IrcUser> {
+  async fn username(self: &Self) -> String { String::new() }
+  async fn channels(self: &Self) -> Vec<Arc<dyn Channel>> { 
+      self.channels.read().await.iter().map(|c| {
+          c.clone()
+      }).collect()
+  }
+}
+
+struct IrcUser {
+    // TODO type has maxlength or is guaranteed to be max
+    nick: RwLock<String>,
+    channels: RwLock<Vec<Arc<IrcChannel>>>
+}
+
+impl Channel for IrcChannel {
+}
+
+struct IrcChannel {
 }
 
 struct IrcMessage {
@@ -260,6 +349,14 @@ struct EndpointEventInfo where mpsc::Sender<EndpointEventResponse>: Send{
     //reason: String,
 }
 
+
+//TODO impl and use
+
+impl EndpointInfo {
+    // TODO use and impl
+    // fn send_event(&self, EndpointEventInfo>, timeout) ->  Result<Response,Timeout>
+}
+
 struct EndpointInfo {
     name: String,
     event_to_endpoint: mpsc::Sender<EndpointEventInfo>,
@@ -407,14 +504,3 @@ async fn main() -> Result<()> {
     srv.run().await
 
 }
-
-
-
-
-
-
-
-
-
-
-
