@@ -62,11 +62,12 @@ impl Channel {
         //TODO use futures unordered
         let mut results = FuturesUnordered::new();
 
-        // TODO can this happen and if handle
+        // TODO this should never happen (should it? can it?)
         assert!( self.endpoints.len() != 0);
 
         self.endpoints.iter().for_each(|ep| {
             // TODO userdef cfg.timeout
+            println!("sending msg to {}", ep.name);
             results.push( ep.send_event(EndpointEvent::Message(msg.clone()), Duration::from_secs(10)))
         });
 
@@ -279,30 +280,6 @@ impl Endpoint for IrcEndpoint {
 
 
     async fn run(mut self: Box<Self>) where Self: Send{
-        let (s,r) = mpsc::channel(999); // TODO user defineable 
-
-        println!("{}", self.name());
-        // TODO DBG
-        if self.name() == "irc_2" {
-            self.event_to_server.unwrap().send(EndpointEventInfo {
-                //event: EndpointEvent::ShutdownServer,
-                event: EndpointEvent::Message(Arc::new( Message {
-                    delivery_mode: DeliveryMode::Channel,
-                    sending_user: Arc::new(User {
-                        name: "joe".into(),
-                        endpoint: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
-                    }),
-                    channel: Some(Arc::new(Channel { name: "#the_pub".into(), endpoints: Vec::new() })),
-                    endpoint_info: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
-                    img: None,
-                    text: Some("welcome to my irc shit".into())
-                }
-                )),
-                response_to: s,
-            }).await; // TODO remove also it has no await 
-        } 
-
-        
         // TODO run server, return failure to started if failed
         let mut event_from_server = self.event_from_server.unwrap();
 
@@ -421,6 +398,7 @@ impl EndpointInfo {
             event: ev,
         };
         self.event_to_endpoint.send(evi);
+        //TODO dont unwrap
         time::timeout(timeout, r.recv()).await.map(|res| res.unwrap())
     }
 }
