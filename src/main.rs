@@ -1,3 +1,4 @@
+#![allow(where_clauses_object_safety)]
 #![allow(unused_imports)]
 #![allow(unused_must_use)]
 #![allow(unused_variables)]
@@ -42,14 +43,23 @@ use std::net::SocketAddr;
 // TODO channels can be assigned a the endpoints they shall span accross
 // like so its possibl to have a channel that delivers to From irc to Tg and the other way around
 // but leaves out for example matrix or includes it whatever ...
-trait Channel {
+
+// the Channel abstraction is some sort of global server wide channel that can span accross
+// multiple endpoints of possible different types
+struct Channel {
+    endpoints: Vec<Arc<dyn EndpointChannel>>,
 }
 
-trait Pm {
+trait EndpointChannel {
+    fn name(&self) -> String;
+    fn users(&self) -> Vec<Arc<User>>;
+
+    fn motd(&self) -> Option<String>;
+
+    fn endpoints(&self) -> Vec<Arc<EndpointInfo>>;
 }
 
-trait DisplayTelegramMessage {
-}
+
 
 struct TelegramMessage {
 }
@@ -112,7 +122,9 @@ struct Image {
 struct Message {
     delivery_mode: DeliveryMode,
     endpoint_info: Arc<EndpointInfo>,
-    user: Arc<dyn User>,
+    
+    //
+    user: Arc<User>,
 
     // TODO on None show the yotosuba 404 pic instead of the image :)
     // with a small notice that its actully missing (4 real) 
@@ -121,39 +133,10 @@ struct Message {
     text: Option<String>,
 }
 
-#[async_trait]
-trait User {
-    //TODO 
-    //! the data User holds such as a nichname is always RwLock<>ed (or atomic in case of counters
-    //! or shit)
-    //! TODO always use .write() when unsure if the following operation MIGHT/WILL write. For
-    //! example when doing changing data after first inspecting it we still write lock it
-    //! eventhough we might not write to it in fact. The problem is that if we:
-    //! if read_lock().cond { ... write().stuff } we would have to drop the read handle before
-    //! getting a write and it can not be guaranteed that we get the write and not something else
-    //!  ---> data race
-    //!
-    //!  thats why all write operations should only be done by the endpoint such as renaming or
-    //!  shit
-
-    async fn username(self: &Self) -> String;
-    async fn channels(self: &Self) -> Vec<Arc<dyn Channel>>;
-
-    // TODO: Impl
-    // send response + 
-    //async fn set_username(self: Arc<Self>) -> Result<()>;
-
+// server wide abstraction for a user
+struct User {
 }
 
-#[async_trait]
-impl User for Arc<IrcUser> {
-  async fn username(self: &Self) -> String { String::new() }
-  async fn channels(self: &Self) -> Vec<Arc<dyn Channel>> { 
-      self.channels.read().await.iter().map(|c| {
-          c.clone()
-      }).collect()
-  }
-}
 
 struct IrcUser {
     // TODO type has maxlength or is guaranteed to be max
@@ -161,10 +144,24 @@ struct IrcUser {
     channels: RwLock<Vec<Arc<IrcChannel>>>
 }
 
-impl Channel for IrcChannel {
+#[async_trait]
+impl EndpointChannel for IrcChannel {
+    fn name(&self) -> String { self.name.clone() }
+    fn users(&self) -> Vec<Arc<User>> {
+        Vec::new()
+    }
+    fn motd(&self) -> Option<String> {
+        self.motd.clone()
+    }
+
+    fn endpoints(&self) -> Vec<Arc<EndpointInfo>> {
+        Vec::new()
+    }
 }
 
 struct IrcChannel {
+    motd: Option<String>,
+    name: String,
 }
 
 struct IrcMessage {
@@ -236,19 +233,30 @@ impl Endpoint for IrcEndpoint {
     }
 
 
-    async fn run(mut self: Box<Self>) {
+    async fn run(mut self: Box<Self>) where Self: Send{
         let (s,r) = mpsc::channel(999); // TODO user defineable 
 
         println!("{}", self.name());
         // TODO DBG
         if self.name() == "irc_2" {
             self.event_to_server.unwrap().send(EndpointEventInfo {
-                event: EndpointEvent::LoadEndpoint(
-                    Box::new(IrcEndpoint::try_from( IrcEndpointConfig {
-                            name: Some("irc_loaded".into()),
-                            sockaddrs: vec!["0.0.0.0:4004".parse().unwrap()]
-                        }).unwrap())),
-
+                event: EndpointEvent::ShutdownServer,
+                //event: EndpointEvent::Message(Arc::new( Message {
+                //    delivery_mode: DeliveryMode::PrivateMessage,
+                //    user: Arc::new( IrcUser{ nick: RwLock::new("leop".into()), channels: RwLock::new(
+                //            {
+                //                vec![
+                //                    IrcChannel {
+                //                        motd: "Im hungry",
+                //                        name: "#the_pub"
+                //                    }
+                //                ]
+                //    })} ),
+                //    endpoint_info: Arc::new(EndpointInfo { name: "_".into(),event_to_endpoint: mpsc::channel(1).0  }),
+                //    img: None,
+                //    text: Some("welcome to my irc shit".into())
+                //}
+                //)),
                 response_to: s,
             }).await; // TODO remove also it has no await 
         } 
@@ -312,10 +320,20 @@ trait Msg {
 
 #[derive(Debug)]
 enum EndpointEvent {
+    Message(Arc<Message>),
+
     ShutdownEndpoint,
     ShutdownServer,
 
     LoadEndpoint(Box<dyn Endpoint  + Send>)
+}
+
+
+impl std::fmt::Debug for Message  {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        // TODO impl
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for Box<dyn Endpoint + Send> {
@@ -418,6 +436,10 @@ impl Server {
             if let Some(event) = self.event_receiver.recv().await {
                 // TODO log(HIGH_VERB,{:?}, event) 
                 let response = match event.event {
+                    EndpointEvent::Message(msg) => {
+                        //println!("<{}>: {}", msg.user.username().await ,msg.text.as_ref().unwrap());
+                        Ok(())
+                    },
                     EndpointEvent::ShutdownServer => {
                         println!("lol shuttin down");
                         running = false;
@@ -504,3 +526,14 @@ async fn main() -> Result<()> {
     srv.run().await
 
 }
+
+
+
+
+
+
+
+
+
+
+
