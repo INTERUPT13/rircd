@@ -39,6 +39,48 @@ use std::convert::TryFrom;
 
 use std::net::SocketAddr;
 
+trait Channel {
+}
+
+trait Pm {
+}
+
+trait DisplayTelegramMessage {
+}
+
+struct TelegramMessage {
+}
+
+enum DeliveryMode {
+    Channel,
+    PrivateMessage,
+    BroadcastChannel, //(deliver message to every channel)
+    BroadcastUser //(deliver message to every user)
+}
+
+enum ImageType {
+    Picture, //just a pic
+    Sticker,
+    Url, // for irc people 
+}
+
+// I chose to go with a struct instead of traits since not That
+// much flexibility is needed here over extra code
+//
+// eg implementing Into<> for each dyn Message to each struct *Message
+// would be more code than just parsing it into a struct Message
+struct Message {
+}
+
+trait User {
+}
+
+trait DisplayIrcMessage {
+}
+
+struct IrcMessage {
+}
+
 struct IrcEndpointConfig {
     name: Option<String>,
     // TODO allow port ranges
@@ -170,8 +212,6 @@ impl Endpoint for IrcEndpoint {
 struct MsgLog {
 }
 
-trait User {
-}
 
 trait Msg {
     // Into<MsgIrc>
