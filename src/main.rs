@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 #![feature(async_closure)]
+#![feature(generators)]
 
 // TODO when routing messages (default -> Msg goes to every endpoint except the sender) but it should
 // be possible to send them to only selected endpoints  as  some sort of stealth/shadow delivery
@@ -29,6 +30,10 @@ use futures::StreamExt;
 
 use tokio::time::{self, Duration};
 use tokio::time::sleep;
+
+use async_stream::stream;
+use tokio::net::*;
+use tokio::io::AsyncReadExt;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -89,14 +94,6 @@ impl Channel {
             Err(eyre!(errmsg))
         }
     }
-}
-
-trait EndpointChannel {
-    fn name(&self) -> String;
-    fn users(&self) -> Vec<Arc<User>>;
-
-    fn motd(&self) -> Option<String>;
-
 }
 
 
@@ -193,17 +190,6 @@ struct IrcUser {
     channels: RwLock<Vec<Arc<IrcChannel>>>
 }
 
-#[async_trait]
-impl EndpointChannel for IrcChannel {
-    fn name(&self) -> String { self.name.clone() }
-    fn users(&self) -> Vec<Arc<User>> {
-        Vec::new()
-    }
-    fn motd(&self) -> Option<String> {
-        self.motd.clone()
-    }
-
-}
 
 struct IrcChannel {
     motd: Option<String>,
@@ -216,7 +202,7 @@ struct IrcMessage {
 struct IrcEndpointConfig {
     name: Option<String>,
     // TODO allow port ranges
-    sockaddrs: Vec<SocketAddr>,
+    bind_sockaddrs: Vec<SocketAddr>,
 }
 
 
@@ -225,6 +211,8 @@ impl TryFrom<IrcEndpointConfig> for IrcEndpoint {
     type Error =  color_eyre::Report;
     fn try_from(conf: IrcEndpointConfig) -> Result<Self> {
         Ok(IrcEndpoint {
+            listeners_plain: Vec::new(),
+            bind_sockaddrs: conf.bind_sockaddrs,
             event_to_server: None,
             event_from_server: None,
             flg: 1,
@@ -254,6 +242,19 @@ trait Endpoint {
     fn name(&self) -> String;
 }
 
+impl IrcEndpoint {
+    async fn init_plain(&mut self) -> Result<Vec<TcpListener>> {
+        // TODO use "stream!" or something to make the init more async -> speedz
+        let mut listeners_plain = Vec::new();
+
+        for addr in &self.bind_sockaddrs {
+            // TODO logging
+            listeners_plain.push( TcpListener::bind(&addr).await? );
+        }
+        Ok(listeners_plain)
+    }
+}
+
 #[async_trait]
 impl Endpoint for IrcEndpoint {
     fn name(&self) -> String {
@@ -279,8 +280,13 @@ impl Endpoint for IrcEndpoint {
     }
 
 
+
     async fn run(mut self: Box<Self>) where Self: Send{
+        // TODO 
+        let cfg_tls = false;
         // TODO run server, return failure to started if failed
+        let listeners_plain = self.init_plain().await.unwrap();
+        // TODO 
         let mut event_from_server = self.event_from_server.unwrap();
 
         // TODO log
@@ -288,8 +294,23 @@ impl Endpoint for IrcEndpoint {
         //sleep(Duration::from_millis(3000)).await; // TODO DBG remove
         //println!("sending shutdown event to server");
 
+        let mut open_connections = FuturesUnordered::new();
+
+
+
+        let mut s = String::new();
 
         loop {
+            // TODO can theis be don prettier?
+            let mut new_connections = {
+                let mut f = FuturesUnordered::new();
+                listeners_plain.iter().for_each(|l| {
+                    f.push(l.accept());
+                });
+                f
+            };
+
+
             tokio::select! {
                 //TODO this should be safe to unwrap() since it has to be initalized at this
                 //point ?!
@@ -313,8 +334,20 @@ impl Endpoint for IrcEndpoint {
                 // pkg => tls.recv()
                 // pkg => plain.recv()
                 // TODO we cant have the sleep here it makes select behave weird
-                _ = sleep(Duration::from_secs(99000)) => {
-                    ()
+
+                // accept new connection
+                conn = new_connections.next() => {
+                    println!("{:?}", conn);
+                    // TODO handle + log errors
+                    let mut l = conn.unwrap().unwrap();
+                    let mut l = Box::leak(Box::new(l.0));
+                    let mut l = l.read_to_string(&mut s);
+                    open_connections.push( l );
+                }
+
+                pack = open_connections.next() => {
+                    
+                    println!("{}", s);
                 }
             };
         }
@@ -362,6 +395,8 @@ impl std::fmt::Debug for Box<dyn Endpoint + Send> {
 }
 
 struct IrcEndpoint {
+    listeners_plain: Vec<TcpListener>,
+    bind_sockaddrs: Vec<SocketAddr>,
     //TODO 
     event_to_server: Option<mpsc::Sender<EndpointEventInfo>>,
     event_from_server: Option<mpsc::Receiver<EndpointEventInfo>>,
@@ -566,17 +601,17 @@ async fn main() -> Result<()> {
 
     let ep1 = IrcEndpoint::try_from( IrcEndpointConfig {
         name: Some("irc_1".into()),
-        sockaddrs: vec!["0.0.0.0:4000".parse().unwrap()]
+        bind_sockaddrs: vec!["0.0.0.0:4000".parse().unwrap()]
     })?;
 
     let ep2 = IrcEndpoint::try_from( IrcEndpointConfig {
         name: Some("irc_2".into()),
-        sockaddrs: vec!["0.0.0.0:4001".parse().unwrap()]
+        bind_sockaddrs: vec!["0.0.0.0:4001".parse().unwrap()]
     })?;
 
     let ep3 = IrcEndpoint::try_from( IrcEndpointConfig {
         name: Some("irc_3".into()),
-        sockaddrs: vec!["0.0.0.0:4002".parse().unwrap()]
+        bind_sockaddrs: vec!["0.0.0.0:4002".parse().unwrap()]
     })?;
 
     srv.load_endpoint(Box::new(ep1));
