@@ -1,6 +1,6 @@
 use tokio::sync::{RwLock, mpsc};
 use std::sync::Arc;
-use crate::event::Event;
+use crate::event::ServerEvent;
 use crate::channel::Channel;
 use color_eyre::Result;
 use log::{debug,info};
@@ -17,7 +17,7 @@ pub trait EndpointBackend {
 impl Endpoint {
     // TODO it should be possible to just mut borrow the endpoint
     // since server shouldn't terminate before self.run() or stuff
-    pub async fn start(self, event_sink: mpsc::Sender<Event>) -> Result<()> {
+    pub async fn start(self, event_sink: mpsc::Sender<ServerEvent>) -> Result<()> {
         debug!("trying to start endpoint {}", self.name);
         self.backend.start(self.name).await
     }
@@ -48,7 +48,7 @@ pub struct Endpoint {
 // information that can be used to contact an endpoint
 pub struct EndpointContact {
     name: String,
-    endpoint_event_sink: mpsc::Sender<Event>
+    endpoint_event_sink: mpsc::Sender<ServerEvent>
 }
 
 impl EndpointContact {

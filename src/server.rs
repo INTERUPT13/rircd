@@ -5,7 +5,7 @@ use crate::endpoint::{Endpoint, EndpointContact};
 use futures::stream::FuturesUnordered;
 use tokio::sync::mpsc;
 
-use crate::event::{EventType, Event};
+use crate::event::{ServerEventType, ServerEvent, EndpointEvent, EndpointEventType};
 use log::{error,info,debug,trace};
 
 struct ServerConfig {
@@ -77,10 +77,20 @@ impl Server {
 
                     debug!("received event {:?}", event);
                     let response = match event.event {
-                        EventType::ShutdownServer(reason) => {
+                        ServerEventType::ShutdownServer(reason) => {
                             info!("server shutdown request receiverd. Reason: \"{}\"", reason);
+                            // TODO Option<>al
+                            //  cfg.broadcast_channels []
+                            //  cfg.broadcast_channels_all
+                            //  cfg.broadcast_users []
+                            //  cfg.broadcast_users_all []
                             break;
                         },
+
+                        ServerEventType::Message(msg) => {
+                            debug!("server eventloop received message {:?}", msg);
+                        },
+
                         _ => {
                             debug!("unimplemented event received in server event loop");
                         },
@@ -95,8 +105,8 @@ impl Server {
 pub struct Server {
     config: ServerConfig,
     endpoints: Vec<Arc<EndpointContact>>,
-    event_sink: mpsc::Sender<Event>,
-    event_source: mpsc::Receiver<Event>,
+    event_sink: mpsc::Sender<ServerEvent>,
+    event_source: mpsc::Receiver<ServerEvent>,
 }
 
 

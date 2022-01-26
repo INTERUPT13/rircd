@@ -14,3 +14,6 @@ async-stream = "0.3.2"
 tokio-util = "0.6.9"
 log = "0.4.14"
 env_logger = "0.9.0"
+
+# I mean why reinvent the wheel
+ellidri-reader = "0.1.0"

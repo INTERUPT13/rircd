@@ -1,12 +1,15 @@
 use tokio::sync::oneshot;
+use crate::message::Message;
+
 
 #[derive(Debug)]
-pub enum EventType {
+pub enum ServerEventType {
     ShutdownServer(String),
+    Message(Message),
 }
 
 #[derive(Debug)]
-pub enum EventResponse {
+pub enum ServerEventResponse {
 }
 
 // type for events passed to endpoints. 
@@ -17,8 +20,26 @@ pub enum EventResponse {
 
 // TODO impl Display for event ourself (derived one is ugly) so
 // we can then use it in the logs n shit
+
+// these events are meant to go to the server
 #[derive(Debug)]
-pub struct Event {
-    pub event: EventType,
-    pub response_sink: oneshot::Sender<EventResponse>
+pub struct ServerEvent {
+    pub event: ServerEventType,
+    pub response_sink: oneshot::Sender<ServerEventResponse>
 }
+
+// events that are meant to be send to endpoints by the server
+#[derive(Debug)]
+pub struct EndpointEvent {
+    pub event: EndpointEventType,
+    pub response_sink: oneshot::Sender<EndpointEventResponse>
+}
+
+#[derive(Debug)]
+pub enum EndpointEventType {
+}
+
+#[derive(Debug)]
+pub enum EndpointEventResponse {
+}
+

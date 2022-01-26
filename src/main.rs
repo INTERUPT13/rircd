@@ -12,6 +12,7 @@ mod server;
 mod endpoint;
 mod event;
 mod channel;
+mod message;
 // TODO make optional by cargo features
 mod irc;
 
