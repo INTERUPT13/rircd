@@ -1,68 +1,42 @@
 use color_eyre::Result;
 use crate::endpoint::EndpointBackend;
 use async_trait::async_trait;
-use log::{info,debug,trace};
+use log::{error, info,debug,trace};
 
 use ellidri_tokens::Message as IrcMessage;
 
+use crate::event::{ServerEvent, EndpointEvent};
+
+
+use crate::message::Message;
 use futures::StreamExt;
+
+use color_eyre::eyre::eyre;
 
 use std::pin::Pin;
 use std::net::{SocketAddr};
+
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use tokio::net::{TcpStream, TcpListener};
 use futures::stream::FuturesUnordered;
 
 use tokio::io::AsyncReadExt;
 
-struct IrcClientConnection {
-}
+use crate::irc::user::IrcUser;
 
-impl IrcClientConnection {
-    pub async fn handle(mut connection: TcpStream, addr: SocketAddr) {
-        trace!("connection handler for {}", addr);
-        // TODO make this user configureable. Though 512 should be the default msg size and 4096
-        // should be the max space tags can use in ircv3 by spec
-        let mut buf = [0;512 + 4096];
-        loop {
-            let bytes_read = match connection.read(&mut buf).await {
-                Ok(bytes_read) => bytes_read,
-                Err(e) => {
-                    debug!("couldn't read data from {}'s socket as of: {}", addr, e);
-                    continue;
-                },
-            };
-            if bytes_read == 0 {
-                break;
-            }
-            let msg_str = match std::str::from_utf8(&buf[0..bytes_read]) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    debug!("error converting {}'s message to the \"str\" type: {}", addr, e);
-                    continue;
-                },
-            };
+use std::sync::Arc;
 
-            let msg_parsed = match IrcMessage::parse(msg_str) {
-                None => {
-                    debug!("error parsing {}'s message to a valid IRC command", addr);
-                    continue;
-                },
-                Some(msg_parsed) => {
-                    debug!("{} issued command {:?}", addr, msg_parsed);
-                    msg_parsed
-                },
-            };
+mod user;
+mod event;
+mod connection;
 
+use crate::irc::connection::IrcClientConnection;
 
-
-
-        }
-
-        info!("closing connection to {}", addr);
-    }
-}
-
+// structure that holds IrcEndpoint specific data. Such as irc channels/users/etc. The these
+// values are somewhat influenced by the servers abstracted endpoint indepenend channel/user
+// records. So for example the title would be changed in the servers abstraced channel
+// representation the title here would be changed as well and the users would be notified
 pub struct IrcEndpoint {
     client_connections: Vec<IrcClientConnection>,
     bind_addrs: Vec<SocketAddr>,
@@ -80,7 +54,7 @@ impl Default for IrcEndpoint {
 }
 
 impl IrcEndpoint {
-    async fn run(self) {
+    async fn run(self, mut endpoint_event_source: mpsc::Receiver<EndpointEvent>) {
         loop {
             // TODO I don't think thats the way to do it
             let mut incomming_connections: FuturesUnordered<_> = self.sockets.iter().map(|sock| sock.accept()).collect();
@@ -101,7 +75,28 @@ impl IrcEndpoint {
                     };
 
                     info!("accepted connection from {}", conn.1);
-                    tokio::spawn( IrcClientConnection::handle(conn.0, conn.1) );
+
+                    let (s,r) = mpsc::channel(99); // TODO configurable size
+
+                    tokio::spawn( IrcClientConnection::handle(conn.0, conn.1, r) );
+                }
+
+                endpoint_event = endpoint_event_source.recv() => {
+                    let endpoint_event = match endpoint_event {
+                        Some(endpoint_event) => endpoint_event,
+                        None => {
+                            //error!("IRC endpoint {} received invalid event. DISCARDING EVENT", self.name);
+                            // TODO 
+                            error!("IRC endpoint {} received invalid event. DISCARDING EVENT", "$NAME");
+                            continue;
+                        }
+                    };
+
+                    let response = match endpoint_event {
+                        _ => error!("IRC endpoint event handler: unimpl'd event"),
+                    };
+
+                    //tracing!("IRC endpoint {} received event", self.name());
                 }
             }
             
@@ -109,9 +104,11 @@ impl IrcEndpoint {
     }
 }
 
+// impl so that our IrcEndpoint complies with the functionalities demanded from
+// an EndpointBackend
 #[async_trait]
 impl EndpointBackend for IrcEndpoint {
-    async fn start(mut self: Box<Self>, mut name: String) -> Result<()> {
+    async fn start(mut self: Box<Self>, mut name: String, server_event_sink: mpsc::Sender<ServerEvent>, endpoint_event_source: mpsc::Receiver<EndpointEvent>) -> Result<()> {
         info!("starting IRC endpoint {}", name);
 
         let mut binding_string = String::new();
@@ -133,9 +130,12 @@ impl EndpointBackend for IrcEndpoint {
 
         info!("IRC endpoint {} binding to: {}", name, binding_string);
 
-        self.run().await;
+        self.run(endpoint_event_source).await;
         Ok(())
     }
+
+    //async fn kick_user();
+    //async fn ban_user();
 
     //async fn connected_users()
 }

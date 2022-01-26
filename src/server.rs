@@ -41,10 +41,35 @@ impl Server {
     }
 
     async fn try_start_all_endpoints(&mut self, endpoints_to_start: Vec<Endpoint>) -> Vec<Result<()>>  {
+
         // TODO is there a better way?
         let results: FuturesUnordered<_> = endpoints_to_start.into_iter()
-            .map(|ep| ep.start(self.event_sink.clone())).collect();
-        results.collect().await
+            .map(|ep| async {
+                // TODO 
+                let name = ep.name.clone();
+                let contact;
+
+                let (endpoint_event_sink, endpoint_event_source) = mpsc::channel(99); //TODO configureable
+                let status = ep.start(self.event_sink.clone(), endpoint_event_source).await;
+
+                // TODO remove hack -> restructure code
+                if status.is_ok() {
+                    contact = Some(Arc::new ( EndpointContact {
+                        name,
+                        endpoint_event_sink,
+                    }));
+                } else {
+                    contact = None;
+                }
+                (status, contact)
+            }).collect();
+
+        let results: Vec<_> = results.collect().await;
+
+        // TODO remove hack -> restructure code
+        self.endpoints = results.iter().filter(|r| r.1.is_some()).map(|r| r.1.as_ref().unwrap().clone() ).collect();
+        results.into_iter().map(|r| r.0 ).collect()
+
     }
 
     //pub fn start_endpoint(&self);
