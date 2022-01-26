@@ -10,21 +10,25 @@ use async_trait::async_trait;
 // trait that is being fullfilled by the actual protocol specific Endpoints
 // like Irc Telegram ....
 #[async_trait]
-trait EndpointBackend {
-    async fn start(self: Box<Self>) -> Result<()>;
+pub trait EndpointBackend {
+    async fn start(self: Box<Self>, name: String) -> Result<()>;
 }
 
 impl Endpoint {
     // TODO it should be possible to just mut borrow the endpoint
     // since server shouldn't terminate before self.run() or stuff
-    pub async fn start(self) -> Result<()> {
-        debug!("trying to start endpoint {}", self.name());
-        self.backend.start().await
+    pub async fn start(self, event_sink: mpsc::Sender<Event>) -> Result<()> {
+        debug!("trying to start endpoint {}", self.name);
+        self.backend.start(self.name).await
     }
 
+    pub fn new(name: String, backend: Box<dyn EndpointBackend>) -> Endpoint {
+        Self {
+            name,
+            backend,
+            in_channels: Vec::new(),
+        }
 
-    fn name(&self) -> String {
-        self.name.clone()
     }
 }
 
@@ -33,9 +37,9 @@ pub struct Endpoint {
     // endpoint gets removed/goes offline we can  first remove it from
     // the channels it is part of. To prevent messages being delivered
     // into nowhere
-    in_channels: Vec<Arc<Channel>>,
-    backend: Box<dyn EndpointBackend>,
     name: String,
+    backend: Box<dyn EndpointBackend>,
+    in_channels: Vec<Arc<Channel>>,
 }
 
 // changing internal values of endpoints isn't performed through directly

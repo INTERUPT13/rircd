@@ -12,8 +12,12 @@ mod server;
 mod endpoint;
 mod event;
 mod channel;
+// TODO make optional by cargo features
+mod irc;
 
 use crate::server::Server;
+use crate::irc::IrcEndpoint;
+use crate::endpoint::Endpoint;
 
 use color_eyre::{eyre, Result};
 //
@@ -38,8 +42,15 @@ use color_eyre::{eyre, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let s = Server::new();
-    Ok(())
+    env_logger::init();
+
+    let irc_ep =  Endpoint::new( "irc_1".into(), Box::new(IrcEndpoint::default()) );
+
+    let mut s = Server::new();
+
+    s.run({
+        vec![ irc_ep ]
+    }).await
 }
 
 
