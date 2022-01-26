@@ -5,6 +5,11 @@ use crate::message::Message;
 #[derive(Debug)]
 pub enum ServerEventType {
     ShutdownServer(String),
+    ShutdownEndpoint(String),
+
+    //UserConnect,
+    //UserJoinChannel,
+    //UserLeaveChannel,
     Message(Message),
 }
 

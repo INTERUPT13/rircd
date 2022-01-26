@@ -3,20 +3,63 @@ use crate::endpoint::EndpointBackend;
 use async_trait::async_trait;
 use log::{info,debug,trace};
 
+use ellidri_tokens::Message as IrcMessage;
+
 use futures::StreamExt;
 
 use std::pin::Pin;
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr};
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpStream, TcpListener};
 use futures::stream::FuturesUnordered;
+
+use tokio::io::AsyncReadExt;
 
 struct IrcClientConnection {
 }
 
 impl IrcClientConnection {
-    pub async fn handle(connection: TcpStream, addr: SocketAddr) {
+    pub async fn handle(mut connection: TcpStream, addr: SocketAddr) {
         trace!("connection handler for {}", addr);
+        // TODO make this user configureable. Though 512 should be the default msg size and 4096
+        // should be the max space tags can use in ircv3 by spec
+        let mut buf = [0;512 + 4096];
+        loop {
+            let bytes_read = match connection.read(&mut buf).await {
+                Ok(bytes_read) => bytes_read,
+                Err(e) => {
+                    debug!("couldn't read data from {}'s socket as of: {}", addr, e);
+                    continue;
+                },
+            };
+            if bytes_read == 0 {
+                break;
+            }
+            let msg_str = match std::str::from_utf8(&buf[0..bytes_read]) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    debug!("error converting {}'s message to the \"str\" type: {}", addr, e);
+                    continue;
+                },
+            };
+
+            let msg_parsed = match IrcMessage::parse(msg_str) {
+                None => {
+                    debug!("error parsing {}'s message to a valid IRC command", addr);
+                    continue;
+                },
+                Some(msg_parsed) => {
+                    debug!("{} issued command {:?}", addr, msg_parsed);
+                    msg_parsed
+                },
+            };
+
+
+
+
+        }
+
+        info!("closing connection to {}", addr);
     }
 }
 
@@ -58,6 +101,7 @@ impl IrcEndpoint {
                     };
 
                     info!("accepted connection from {}", conn.1);
+                    tokio::spawn( IrcClientConnection::handle(conn.0, conn.1) );
                 }
             }
             
