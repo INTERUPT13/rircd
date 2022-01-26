@@ -54,7 +54,9 @@ impl Default for IrcEndpoint {
 }
 
 impl IrcEndpoint {
-    async fn run(self, mut endpoint_event_source: mpsc::Receiver<EndpointEvent>) {
+    async fn run(mut self, mut endpoint_event_source: mpsc::Receiver<EndpointEvent>) {
+        let (irc_event_sink, mut irc_event_source) = mpsc::channel(99); // TODO configurable size
+
         loop {
             // TODO I don't think thats the way to do it
             let mut incomming_connections: FuturesUnordered<_> = self.sockets.iter().map(|sock| sock.accept()).collect();
@@ -76,9 +78,25 @@ impl IrcEndpoint {
 
                     info!("accepted connection from {}", conn.1);
 
-                    let (s,r) = mpsc::channel(99); // TODO configurable size
+                    let (irc_session_event_sink, irc_session_event_source) = mpsc::channel(99); //  TODO configureable
+                    self.client_connections.push( IrcClientConnection {
+                        associated_user: Arc::new( RwLock::new( IrcUser {} )),
+                        irc_session_event_sink,
+                    });
+                    tokio::spawn( IrcClientConnection::handle(conn.0, conn.1, irc_event_sink.clone(), irc_session_event_source) );
+                }
 
-                    tokio::spawn( IrcClientConnection::handle(conn.0, conn.1, r) );
+                irc_event = irc_event_source.recv() => {
+                    let irc_event = match irc_event {
+                        Some(ev) => ev,
+                        None => {
+                            error!("received invalid IrcEvent in IrcEndpoint handler");
+                            continue;
+                        },
+                    };
+
+
+                    trace!("irc endpoint event handle received irc_event {:?}", irc_event);
                 }
 
                 endpoint_event = endpoint_event_source.recv() => {
@@ -91,6 +109,7 @@ impl IrcEndpoint {
                             continue;
                         }
                     };
+
 
                     let response = match endpoint_event {
                         _ => error!("IRC endpoint event handler: unimpl'd event"),
