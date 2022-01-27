@@ -203,6 +203,7 @@ impl IrcBackendEndpoint {
         println!("acceptor()");
 
         loop {
+            let name = name.clone();
             tokio::select! {
                 // from endpoint handler
                 acceptor_event_in = acceptor_channel_pair.endpoint_handler_source.recv() => {
@@ -220,13 +221,31 @@ impl IrcBackendEndpoint {
                             continue;
                         },
                     };
+
                     
 
+
+
+                    let connection_handler_irc_event_source = {
+                        let (sink,source) = mpsc::channel(99); // TODO cfg
+                        let mut hm = connector_sinks.write().await;
+                        if hm.insert(connection.1, sink).is_some() {
+                            //TODO can this happn?
+                            //log_warn("key already present?! How did this happen?!);
+                            continue;
+                        }
+                        source 
+                    };
 
                     let connection_handle = IrcConnectionHandlePlain {
                         client_addr: connection.1,
                         connection_handler_irc_event_sink: connector_to_endpoint_handler.clone(),
+                        connection_handler_irc_event_source: connection_handler_irc_event_source,
                     };
+
+                    // TODO handle and send back status
+                    println!("lol");
+                    let res = connection_handle.init_plain(name).await.unwrap();
                 }
             }
         }
