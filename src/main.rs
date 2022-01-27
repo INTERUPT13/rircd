@@ -18,9 +18,11 @@ mod message;
 mod irc;
 
 use color_eyre::{Result,eyre::eyre};
-
+use crate::server::Server;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut s = Server::default();
+    s.run().await;
     Ok(())
 }

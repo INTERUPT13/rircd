@@ -46,8 +46,7 @@ pub trait EndpointBackend {
     async fn try_init(
         self: Arc<Self>,
         name: String,
-        server_event_sink: mpsc::Sender<ServerEvent>,
-        endpoint_backend_event_source: mpsc::Receiver<EndpointBackendEvent>) -> Result<EndpointHandle> where Arc<Self>: Send{
+        server_event_sink: mpsc::Sender<ServerEvent>) -> Result<EndpointHandle> where Arc<Self>: Send{
 
             //name is Arc<RwLocked<<>>'d so it can be shared -> changes are synced
             let name = Arc::new(RwLock::new(name));
