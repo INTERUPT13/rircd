@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 // holds data associated with a single irc client connection to our server
 pub struct IrcClientConnection {
-    pub associated_user: Arc<RwLock<IrcUser>>,
+    //pub associated_user: Arc<RwLock<IrcUser>>,
     pub irc_session_event_sink: mpsc::Sender<IrcEvent>,
 }
 
@@ -42,6 +42,17 @@ impl IrcClientConnection {
             Ok(cmd) => {
                 use ellidri_tokens::Command::*;
                 match cmd {
+                    User => {
+                        if message.num_params == 4 {
+                            Ok( IrcEventType::User(
+                                    message.params[0].into(),
+                                    //TODO is it really ok to skip ["0", "*"] -> [1-2]
+                                    message.params[3].into(),
+                            ))
+                        } else {
+                            Err(eyre!("User command wrong amount of parameters"))
+                        }
+                    },
                     Nick => {
                         if message.num_params == 1 {
                             Ok( IrcEventType::Nick(message.params[0].into()) )
@@ -106,6 +117,7 @@ impl IrcClientConnection {
                     
                     let irc_event = IrcEvent {
                         event: irc_event_type,
+                        remote_addr: addr,
                         //response_sink
                     };
 

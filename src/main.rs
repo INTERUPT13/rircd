@@ -4,6 +4,7 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 #![allow(dead_code)]
+#![allow(unreachable_patterns)]
 
 #![feature(async_closure)]
 #![feature(generators)]
